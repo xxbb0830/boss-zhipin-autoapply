@@ -1,0 +1,33 @@
+# ---- 个人配置：含你的技能、话术、简历细节，绝对不要提交 ----
+config/profile.yaml
+config/profile.draft.yaml
+config/env.local.cmd
+references/profile.md
+
+# ---- 运行数据 / 台账 / 日志 ----
+data/
+downloads/
+*.log
+applied.jsonl
+quota.json
+history.jsonl
+report_*.md
+auto_*.log
+
+# ---- 简历原文 ----
+resume*
+*.pdf
+*.docx
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---- 编辑器 / 备份 ----
+*.bak
+*.lf.bak
+.vscode/
+.idea/
+.DS_Store

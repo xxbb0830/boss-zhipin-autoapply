@@ -1,0 +1,4 @@
+# 统一换行符，避免 Windows 下 bat 被 checkout 成 LF 而双击没反应
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf

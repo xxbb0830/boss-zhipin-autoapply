@@ -1,0 +1,5 @@
+uiautomator2>=3.7.1
+adbutils
+lxml
+PyYAML>=6.0
+pypdf>=4.0
