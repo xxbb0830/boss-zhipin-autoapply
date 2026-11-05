@@ -240,4 +240,5 @@ fit:
 limits:
   daily: 150      # BOSS 每日沟通上限
   reserve: 2      # 留几个额度不烧完
-  log_keep_days: 3  # 只保留最近 N 天的日志和报告（台账不受影响）
+  log_keep_days: 1  # 超过 N 天自动删日志/报告（台账不受影响）
+  log_enabled: true # false = 压根不写日志文件，只在控制台输出

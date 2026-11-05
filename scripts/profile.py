@@ -66,7 +66,8 @@ def load(reload=False):
     data.setdefault("limits", {})
     data["limits"].setdefault("daily", 150)
     data["limits"].setdefault("reserve", 2)
-    data["limits"].setdefault("log_keep_days", 3)
+    data["limits"].setdefault("log_keep_days", 1)      # 超过 1 天自动删
+    data["limits"].setdefault("log_enabled", True)     # False = 压根不写日志
 
     data["_path"] = path
     data["_source"] = source

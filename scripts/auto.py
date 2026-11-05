@@ -116,7 +116,7 @@ def build_report(stats, quota, extra=""):
         f.write("\n".join(lines))
     p(f"report -> {path}")
     # 报告写完再清一次，把刚生成的这份也算进去，数量不会漂
-    C.cleanup_logs(C.profile_limits().get("log_keep_days", 3))
+    C.cleanup_logs(C.profile_limits().get("log_keep_days", 1))
     return path
 
 
@@ -131,11 +131,16 @@ def main():
                     help="seconds to wait for the phone before giving up")
     a = ap.parse_args()
 
-    logpath = os.path.join(DATA, f"auto_{time.strftime('%Y%m%d')}.log")
-    # 开日志前先清旧日志，避免日志越攒越多；台账不动
-    keep_days = C.profile_limits().get("log_keep_days", 3)
+    limits = C.profile_limits()
+    keep_days = int(limits.get("log_keep_days", 1))
+    log_on = bool(limits.get("log_enabled", True))
+    # 开日志前先清旧日志，避免越攒越多；台账不动
     C.cleanup_logs(keep_days)
-    sys.stdout = Tee(logpath)
+
+    logpath = (os.path.join(DATA, f"auto_{time.strftime('%Y%m%d')}.log")
+               if log_on else "(已关闭，不写日志)")
+    if log_on:
+        sys.stdout = Tee(logpath)
     p("=" * 60)
     p(f"auto.py start  dry={a.dry}  limit={a.limit}  log={logpath}")
 

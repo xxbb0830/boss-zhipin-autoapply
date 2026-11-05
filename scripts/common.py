@@ -96,19 +96,35 @@ def robust(fn=None, *, tries=4, delay=2.0):
 
 
 # ---------------- housekeeping ----------------
-def cleanup_logs(keep_days=3, max_reports=5, verbose=True):
-    """删掉 keep_days 天之前的日志和报告，并把报告数量压到 max_reports 份。
+def _file_date(path):
+    """从文件名里的 YYYYMMDD 取日期，取不到就用 mtime。"""
+    import datetime
+    m = re.search(r"(\d{8})", os.path.basename(path))
+    if m:
+        try:
+            return datetime.datetime.strptime(m.group(1), "%Y%m%d").date()
+        except ValueError:
+            pass
+    return datetime.date.fromtimestamp(os.path.getmtime(path))
 
-    只动 auto_*.log 和 report_*.md；台账 applied.jsonl、quota.json、
-    history.jsonl 一律不碰 —— 那些是断点续跑要用的，删了会重复投递。
+
+def cleanup_logs(keep_days=1, max_reports=5, verbose=True):
+    """只保留最近 keep_days 天（含今天）的日志和报告，默认只留当天。
+
+    按文件名里的日期判断，而不是按 mtime —— 这样「昨天 17:43 的日志」
+    在今天早上就会被清掉，不用等满 24 小时。
+    台账 applied.jsonl、quota.json、history.jsonl 一律不碰，
+    那些是断点续跑要用的，删了会重复投递。
     """
+    import datetime
     import glob
-    cutoff = time.time() - keep_days * 86400
+    today = datetime.date.today()
+    oldest = today - datetime.timedelta(days=max(0, int(keep_days) - 1))
     removed = []
     for pat in ("auto_*.log", "report_*.md"):
         for f in glob.glob(os.path.join(DATA, pat)):
             try:
-                if os.path.getmtime(f) < cutoff:
+                if _file_date(f) < oldest:
                     os.remove(f)
                     removed.append(os.path.basename(f))
             except OSError:
@@ -125,8 +141,8 @@ def cleanup_logs(keep_days=3, max_reports=5, verbose=True):
             pass
 
     if verbose and removed:
-        print(f"[cleanup] 清理 {len(removed)} 个旧日志/报告"
-              f"（保留 {keep_days} 天内、最近 {max_reports} 份报告）", flush=True)
+        print(f"[cleanup] 清理 {len(removed)} 个过期日志/报告"
+              f"（保留最近 {keep_days} 天、最多 {max_reports} 份报告）", flush=True)
     return removed
 
 
