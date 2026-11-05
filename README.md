@@ -183,6 +183,7 @@ run.bat --dry --limit 10   # 只看判断结果，一条不发（强烈建议先
 | `fit.min_score` | 钩子标题下，JD 技术权重到多少直接投 |
 | `fit.short_jd` | JD 短于多少字算「信息不足」→ 放行 |
 | `limits.daily` | 每日沟通上限（默认 150） |
+| `limits.log_keep_days` | 日志保留天数（默认 3，台账不受影响） |
 
 改完不用重启什么，下次运行自动生效。
 
@@ -219,6 +220,10 @@ data/auto_YYYYMMDD.log 当天完整日志
 data/report_*.md       跑完自动生成的报告（类别分布 + 今日明细）
 data/quota.json        最近一次额度探测结果
 ```
+
+**日志会自动清理**，不用手动删：每次启动时清掉 `limits.log_keep_days`
+（默认 3）天前的日志，报告只保留最近 5 份。
+台账 `applied.jsonl` **永远不会被删** —— 它决定「谁投过了」，删了会重复投递。
 
 统计累计投递：
 

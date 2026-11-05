@@ -66,6 +66,7 @@ def load(reload=False):
     data.setdefault("limits", {})
     data["limits"].setdefault("daily", 150)
     data["limits"].setdefault("reserve", 2)
+    data["limits"].setdefault("log_keep_days", 3)
 
     data["_path"] = path
     data["_source"] = source

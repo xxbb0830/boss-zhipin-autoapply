@@ -240,3 +240,4 @@ fit:
 limits:
   daily: 150      # BOSS 每日沟通上限
   reserve: 2      # 留几个额度不烧完
+  log_keep_days: 3  # 只保留最近 N 天的日志和报告（台账不受影响）

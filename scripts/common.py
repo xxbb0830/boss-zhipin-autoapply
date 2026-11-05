@@ -15,6 +15,15 @@ def _cfg_paths():
         return {}
 
 
+def profile_limits():
+    """config/profile.yaml 的 limits 段（daily / reserve / log_keep_days）。"""
+    try:
+        import profile as P
+        return (P.load() or {}).get("limits") or {}
+    except Exception:
+        return {}
+
+
 _PATHS = _cfg_paths()
 
 
@@ -84,6 +93,41 @@ def robust(fn=None, *, tries=4, delay=2.0):
             raise last
         return wrapper
     return deco(fn) if fn else deco
+
+
+# ---------------- housekeeping ----------------
+def cleanup_logs(keep_days=3, max_reports=5, verbose=True):
+    """删掉 keep_days 天之前的日志和报告，并把报告数量压到 max_reports 份。
+
+    只动 auto_*.log 和 report_*.md；台账 applied.jsonl、quota.json、
+    history.jsonl 一律不碰 —— 那些是断点续跑要用的，删了会重复投递。
+    """
+    import glob
+    cutoff = time.time() - keep_days * 86400
+    removed = []
+    for pat in ("auto_*.log", "report_*.md"):
+        for f in glob.glob(os.path.join(DATA, pat)):
+            try:
+                if os.path.getmtime(f) < cutoff:
+                    os.remove(f)
+                    removed.append(os.path.basename(f))
+            except OSError:
+                pass
+
+    # 报告一次运行一份，同一天会攒很多，只留最新的几份
+    reports = sorted(glob.glob(os.path.join(DATA, "report_*.md")),
+                     key=os.path.getmtime, reverse=True)
+    for f in reports[max_reports:]:
+        try:
+            os.remove(f)
+            removed.append(os.path.basename(f))
+        except OSError:
+            pass
+
+    if verbose and removed:
+        print(f"[cleanup] 清理 {len(removed)} 个旧日志/报告"
+              f"（保留 {keep_days} 天内、最近 {max_reports} 份报告）", flush=True)
+    return removed
 
 
 # ---------------- primitives ----------------

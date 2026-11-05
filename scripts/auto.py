@@ -15,8 +15,9 @@ import common as C
 
 DATA = C.DATA
 LEDGER = os.path.join(DATA, "applied.jsonl")
-DAILY_LIMIT = 150
-RESERVE = 2          # leave a couple of the daily budget untouched
+_LIM = C.profile_limits()
+DAILY_LIMIT = int(_LIM.get("daily", 150))
+RESERVE = int(_LIM.get("reserve", 2))   # leave a couple of the daily budget untouched
 
 
 class Tee:
@@ -114,6 +115,8 @@ def build_report(stats, quota, extra=""):
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     p(f"report -> {path}")
+    # 报告写完再清一次，把刚生成的这份也算进去，数量不会漂
+    C.cleanup_logs(C.profile_limits().get("log_keep_days", 3))
     return path
 
 
@@ -129,6 +132,9 @@ def main():
     a = ap.parse_args()
 
     logpath = os.path.join(DATA, f"auto_{time.strftime('%Y%m%d')}.log")
+    # 开日志前先清旧日志，避免日志越攒越多；台账不动
+    keep_days = C.profile_limits().get("log_keep_days", 3)
+    C.cleanup_logs(keep_days)
     sys.stdout = Tee(logpath)
     p("=" * 60)
     p(f"auto.py start  dry={a.dry}  limit={a.limit}  log={logpath}")
