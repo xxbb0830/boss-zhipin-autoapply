@@ -171,18 +171,22 @@ _LAST_XML = None
 def _detail_ready():
     """详情页真正画出来了（不是只有 Activity 名变了）。
 
-    只看 activity 会在转场动画刚开始时就返回 True，那时候点「立即沟通」
-    可能被动画吞掉 —— 所以要求 tv_job_name 和 btn_chat 都在。
+    只看 activity 会在转场动画刚开始时就返回 True，那时候点按钮会被动画吞掉。
+    判据用 `tv_job_name`：它只在详情页出现，列表页用的是 `tv_position_name`。
+
+    **不能用 `btn_chat` 判断** —— 校招/实习岗的按钮叫「投递简历」，
+    根本没有 btn_chat，用它当条件会导致这类岗位全部 open_fail。
+
     顺手把这份 xml 存下来，调用方不用再 dump 一次（一次 dump 0.3~0.5s）。
     """
     global _LAST_XML
     try:
         x = C.dump_xml()
-        _LAST_XML = x
-        return 'tv_job_name' in x and 'btn_chat' in x
     except Exception:
         _LAST_XML = None
         return False
+    _LAST_XML = x
+    return 'tv_job_name' in x or 'tv_description' in x
 
 
 def return_to_list(max_steps=8):
@@ -223,6 +227,11 @@ def open_card(card):
         C.tap(x, y, 0)
         if C.wait_for(lambda: is_detail(C.cur_act()) and _detail_ready(), tmo):
             return True
+        # 已经在详情页了（只是这页结构不同，比如校招没有 btn_chat）：
+        # 千万别再点下一个落点，那一下会点掉详情页里的按钮
+        if is_detail(C.cur_act()) and _LAST_XML and (
+                'tv_job_name' in _LAST_XML or 'tv_description' in _LAST_XML):
+            return True
     return False
 
 
@@ -253,13 +262,17 @@ def handle_popup():
 def enter_chat(max_tries=3):
     """点「立即沟通」并进入聊天页，中间顺手点掉挡路的提示框。
 
-    返回 ("chat"|"limit"|"no_chat", 说明)。
+    返回 ("chat"|"limit"|"delivered"|"no_chat", 说明)。
+    校招/实习岗的按钮不叫 btn_chat，按文字兜底；有的投完直接是「投递成功」
+    页面（没有聊天），这种算 delivered。
     """
     for _ in range(max_tries):
-        if not C.tap_id("btn_chat", 3):
-            # 校招/实习岗的按钮可能叫「投递简历」「申请职位」
-            for label in ("立即沟通", "投递简历", "申请职位", "我要投递", "沟通"):
-                if C.tap_text(label, 2):
+        # 页面已经渲染完了，btn_chat 要么在要么不在，不用等 3 秒
+        if not C.tap_id("btn_chat", 1.2):
+            # 校招/实习岗的按钮可能叫「投递简历」「立即投递」「申请职位」
+            for label in ("立即沟通", "投递简历", "立即投递", "马上投递",
+                          "申请职位", "我要投递", "沟通", "投递"):
+                if C.tap_text(label, 1.5):
                     p(f"      used fallback button 「{label}」")
                     break
         if C.wait_for(lambda: "ChatRoom" in C.cur_act(),
@@ -271,6 +284,15 @@ def enter_chat(max_tries=3):
             return "limit", "popup"
         if handled:
             continue                       # 弹窗点掉了，下一轮再点沟通
+
+        # 校招投递完可能是「投递成功」页，没有聊天页
+        try:
+            txts = " ".join(C.screen_texts(C.dump_xml()))
+        except Exception:
+            txts = ""
+        if any(k in txts for k in ("投递成功", "已投递", "简历已投递", "投递已送达")):
+            return "delivered", "no_chat"
+
         if not is_detail(C.cur_act()):
             return "no_chat", C.cur_act()   # 跑到别的页面去了
         # 还在详情页：多半是点击被转场动画吞了，下一轮重点
@@ -292,7 +314,8 @@ def apply_one(card, dry=False):
     comp = det["company"] or company
     btn = det["btn"]
 
-    if not det["job"]:
+    # 校招页可能没有 tv_job_name，退回到列表卡片上的标题，别直接判失败
+    if not job:
         return_to_list()
         return {"status": "detail_parse_fail", "job": job, "company": comp}
 
@@ -324,6 +347,11 @@ def apply_one(card, dry=False):
     if state == "limit":
         return_to_list()
         return {"status": "no_chat", "limit": True, "job": job, "company": comp}
+    if state == "delivered":
+        # 校招岗点「投递简历」直接投出去了，没有聊天页，也就没话术可发
+        return_to_list()
+        return {"status": "ok", "how": "delivered_no_chat", "cat": cat,
+                "job": job, "company": comp, "msg_len": 0}
     if state != "chat":
         txts = C.screen_texts(C.dump_xml())
         limit = any(k in t for t in txts for k in C.HARD_LIMIT_TEXTS)
