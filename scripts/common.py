@@ -495,5 +495,48 @@ def screen_texts(xml):
             if (n.get("text") or "").strip()]
 
 
+# ---------------- 弹窗 ----------------
+# BOSS 在沟通到一定次数时会弹「今日还能沟通 N 次」，点掉才能继续。
+# 点掉之后还能投，所以这个不算「没额度」。
+POPUP_BUTTONS = ("知道了", "我知道了", "确定", "好的", "好", "仍要沟通",
+                 "继续沟通", "继续", "关闭")
+
+# 只有出现这些，才是真的没额度了，必须停。
+# 注意不要收「上限」「已达」这种泛词 —— 提示「已达 120 次，还能沟通 30 次」
+# 里也有，会把正常提示误判成额度用尽。
+HARD_LIMIT_TEXTS = ("已达上限", "达到上限", "沟通上限", "明天再", "明天再来",
+                    "额度已用完", "次数已用完", "无法再沟通", "不能再沟通",
+                    "已用完")
+
+
+def find_button(xml, labels=POPUP_BUTTONS):
+    """在 xml 里找文案等于 labels 之一的可点节点，返回 (cx, cy, text)。"""
+    try:
+        root = etree.fromstring(xml.encode("utf-8"))
+    except Exception:
+        return None
+    hits = []
+    for n in root.iter("node"):
+        t = (n.get("text") or "").strip()
+        if t not in labels:
+            continue
+        b = _b(n)
+        if not b:
+            continue
+        if n.get("clickable") == "true":
+            hits.append((b, t))
+        else:
+            # 文字常挂在不 clickable 的子节点上，往上找一层可点的
+            p = n.getparent()
+            if p is not None and p.get("clickable") == "true":
+                pb = _b(p)
+                if pb:
+                    hits.append((pb, t))
+    if not hits:
+        return None
+    b, t = hits[-1]          # 弹窗按钮在层级里通常最靠后
+    return (b[0] + b[2]) // 2, (b[1] + b[3]) // 2, t
+
+
 def sleep(a=1.0, b=2.5):
     time.sleep(random.uniform(a, b))

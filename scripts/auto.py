@@ -124,7 +124,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=DAILY_LIMIT)
     ap.add_argument("--dry", action="store_true")
-    ap.add_argument("--no-quota", action="store_true", help="skip the quota probe")
+    ap.add_argument("--no-quota", action="store_true",
+                    help="（已废弃，现在默认就不查额度）")
+    ap.add_argument("--quota", action="store_true",
+                    help="启动时先数一遍今日已沟通（要翻求职记录，慢 1 分钟左右；"
+                         "默认不查，投到 App 自己拦住为止）")
     ap.add_argument("--report-only", action="store_true")
     ap.add_argument("--max-attempts", type=int, default=3)
     ap.add_argument("--wait-device", type=int, default=300,
@@ -160,27 +164,26 @@ def main():
         p(f"warn ensure_boss: {e}")
 
     # ---- quota ----
+    # 默认不查：翻求职记录要 1 分钟，而且没必要 —— 投到上限时 App 会自己
+    # 弹「还能沟通 N 次」，再投就拦下来，脚本点掉提示继续，真没额度了才停。
     quota = None
-    if not a.no_quota:
+    limit = a.limit
+    if a.quota:
         import quota as Q
         try:
             p("counting today's 沟通 ...")
             quota = Q.count(verbose=False)
             p(f"quota: used={quota.get('used')} remaining={quota.get('remaining')}")
+            if quota.get("remaining") is not None:
+                limit = min(a.limit, max(0, quota["remaining"] - RESERVE))
+                if limit <= 0:
+                    p("nothing left in today's budget — stopping")
+                    build_report(None, quota, "今日额度已用完（或接近上限），未执行投递。")
+                    return
         except Exception as e:
             p(f"quota probe failed: {type(e).__name__} {e}")
-    if quota and quota.get("remaining") is not None:
-        remaining = quota["remaining"]
-        limit = min(a.limit, max(0, remaining - RESERVE))
-        if limit <= 0:
-            p("nothing left in today's budget — stopping")
-            build_report(None, quota, "今日额度已用完（或接近上限），未执行投递。")
-            return
-    else:
-        limit = min(a.limit, 100)
-        p(f"quota unknown -> conservative limit={limit}")
 
-    p(f"will apply up to {limit}")
+    p(f"will apply up to {limit}（不预查额度，投到 App 拦为止）")
     C.ensure_job_list()
 
     # ---- apply with device-loss retry ----

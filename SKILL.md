@@ -59,8 +59,9 @@ python scripts/onboard.py --check
 ./run.bat                     # Windows
 ```
 
-它会自己完成：等设备 → 体检 → 数今日已沟通 → 算剩余额度 → 投递 →
-写 Markdown 报告。全程日志进 `data/auto_YYYYMMDD.log`，可以随时 Ctrl+C，
+它会自己完成：等设备 → 体检 → 投递 → 写 Markdown 报告。
+**启动不预查额度**（翻求职记录要 1 分钟，没必要），直接开投，
+投到 App 拦住为止。全程日志进 `data/auto_YYYYMMDD.log`，可以随时 Ctrl+C，
 重跑会从台账断点继续、不会重复打扰同一家公司。
 
 命令行等价：
@@ -69,18 +70,19 @@ python scripts/onboard.py --check
 cd scripts
 PY=../.venv/Scripts/python.exe     # 或用 config/env.local.cmd 里的 BOSS_PY
 
-$PY auto.py                 # 全自动：额度 + 投递 + 报告
+$PY auto.py                 # 全自动：投递 + 报告
 $PY auto.py --wait-device 3600   # 手机还没插就先挂着，插上自动开跑
 $PY auto.py --limit 20      # 本次最多 20 个
 $PY auto.py --dry           # 只打开详情、不发送（校准用）
 $PY auto.py --report-only   # 只按台账重生成报告
+$PY auto.py --quota         # 启动时先数一遍今日已沟通（慢，可选）
 ```
 
 单独跑某一步（调试时用）：
 
 ```bash
 $PY doctor.py               # 设备 / App / 环境体检
-$PY quota.py                # 今日已沟通数 + 剩余额度
+$PY quota.py                # 手动查今日已沟通数 + 剩余额度（可选）
 $PY history.py              # 抓求职记录刷新习惯画像
 $PY apply.py --limit 150    # 只跑投递循环
 ```
@@ -96,17 +98,20 @@ $PY apply.py --limit 150    # 只跑投递循环
        judge fit: JD 里有没有我真正会的技术（fit.py）
                     没有 / 岗位不对口 → back, skip（no_fit，不打扰对方）
        classify(tv_job_name + tv_description) → category
-       tap btn_chat ─────────► ChatRoomActivity
+       tap btn_chat ─────────► 可能弹「今日还能沟通 N 次」
+                                 → handle_popup() 点掉「好」，再点一次沟通
+                                 → 若弹「已达上限」→ abort=daily_limit
+                               ChatRoomActivity
                                  app auto-sends the default greeting
                                  (= the 投递 itself, consumes 1 沟通 quota)
        type pre-written category message (≤80 字)
        tap the send control right of the EditText
        verify the message appears as tv_content_text
-       back → detail → back → list
+       back ×3（收键盘 → 退聊天 → 退详情）
        append ledger line
 ```
 
-Pacing: random 7–15 s between applications, longer pauses every N jobs.
+Pacing: 默认全速（`pacing.gap: 0`），每投一个 6–10 秒；想放慢改配置。
 The ledger makes the run resumable — re-running continues where it stopped
 and never double-messages a company.
 
@@ -193,15 +198,20 @@ asyncio / Docker / MySQL / Hive / pandas / 爬虫 ……
 
 ## 6. Quota policy
 
-BOSS直聘 caps 沟通 per day (user states 150). The engine therefore:
+用户口径（2026-11-08）：**不要预查额度**，进来直接投，投到 150 次 App 自己就不让投了。
+`quota.py` 只作为手动工具保留（`python quota.py`），`auto.py` 默认不调用。
 
-1. `quota.py` counts today's entries at the top of 求职记录 → 沟通过.
-2. `apply.py --limit` should be set to `150 − today_already`.
-3. The ledger (`applied.jsonl`) records every attempt with status, so a
-   re-run never re-contacts a company.
-4. If the app shows 上限/频繁/明天再, `apply.py` stops immediately.
-5. Four consecutive failures also stop the run (protects against a broken
-   UI state rather than burning the quota blindly).
+1. `auto.py --limit` 默认 150，跑到上限或列表翻到底为止。
+2. **弹窗处理（关键）**：沟通到 120 次左右，点「立即沟通」会弹
+   「今日还能沟通 N 次」。`apply.handle_popup()` 找到弹窗上的确认按钮
+   （`好`/`知道了`/`确定`…）**点掉它**，然后重新点沟通进聊天页。
+   以前这里是按返回键，结果弹窗关了又点、点了又弹，死循环，得人工点一下。
+3. 只有文案里出现 `已达上限 / 明天再 / 已用完` 才算真没额度
+   （`common.HARD_LIMIT_TEXTS`），立刻 `abort=daily_limit` 停下。
+   **不要**用「上限」「已达」这种泛词判断 —— 「已达 120 次，还能沟通 30 次」
+   里也有，会误判成额度用尽。
+4. 台账（`applied.jsonl`）记录每次尝试，重跑不会重复联系同一家公司。
+5. 连续 4 次失败也停（防止界面坏掉时盲目烧额度）。
 
 ## 7. Guardrails (learned the hard way)
 
@@ -259,10 +269,10 @@ scripts/common.py       resilient u2 driver, app guards, UI parsers, 坐标缩�
 scripts/messages.py     类别归类 + 取用固定话术（读 profile）
 scripts/targeting.py    列表卡片门槛（只看还在招）
 scripts/fit.py          胜任度判断：JD 里有没有我真正会的技术（读 profile）
-scripts/apply.py        main apply loop (resumable, quota-aware)
-scripts/auto.py         one-shot runner: quota -> apply -> report
+scripts/apply.py        main apply loop（台账去重、断点续跑、弹窗处理）
+scripts/auto.py         one-shot runner: apply -> report（不预查额度）
+scripts/quota.py        手动查今日已沟通（可选，auto.py 默认不调用）
 scripts/history.py      scrape 求职记录 → infer habits
-scripts/quota.py        count today's 沟通
 scripts/doctor.py       environment / device / app health check
 references/ui-map.md    every selector and activity used
 references/messages.md  话术设计说明（文案本体在 config）

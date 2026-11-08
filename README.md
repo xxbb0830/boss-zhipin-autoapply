@@ -201,21 +201,25 @@ run.bat --dry --limit 10   # 只看判断结果，一条不发（强烈建议先
 ```
 读取台账（已投过的公司 → 跳过）
   ↓
-等设备 → 体检 → 数今日已沟通 → 算剩余额度
-  ↓
-回到「职位」列表
+等设备 → 体检 → 回到「职位」列表（不预查额度，直接开投）
   └─ 逐张卡片：
        打开详情
        ├─ 按钮不是「立即沟通」→ 已联系过，返回
        ├─ fit 判断不通过      → 返回（不打扰对方）
        └─ 通过 → 点「立即沟通」
+                 ├─ 弹「今日还能沟通 N 次」→ 点掉「好」，继续投
+                 └─ 弹「已达上限」        → 停，今天到此为止
                  App 自动发默认招呼语（这一步就消耗 1 次额度）
                  输入该类别话术 → 点最右侧发送键
                  校验气泡出现 → 返回列表
-                 写台账，随机歇 7–15 秒
+                 写台账
 ```
 
-停止条件：额度用完 / App 提示「上限·频繁」/ 连续 4 次失败 / 列表翻到底。
+停止条件：App 提示「已达上限」/ 连续 4 次失败 / 列表翻到底。
+
+**为什么不预查额度**：翻一遍求职记录要 1 分钟左右，而且没必要 ——
+投到上限时 App 自己会弹提示，脚本点掉提示继续投，真没额度了才停。
+想手动查一次，跑 `python scripts/quota.py`。
 
 ---
 
@@ -225,7 +229,7 @@ run.bat --dry --limit 10   # 只看判断结果，一条不发（强烈建议先
 data/applied.jsonl     每行一条：{公司, 岗位, 薪资, 类别, 状态, 时间, JD摘要}
 data/auto_YYYYMMDD.log 当天完整日志
 data/report_*.md       跑完自动生成的报告（类别分布 + 今日明细）
-data/quota.json        最近一次额度探测结果
+data/quota.json        手动跑 --quota / quota.py 时的探测结果（平时没有）
 ```
 
 **日志只留当天，第二天自动删。** 每次启动时按文件名里的日期清理，
@@ -285,7 +289,7 @@ python -c "import json;rs=[json.loads(l) for l in open('data/applied.jsonl',enco
 │   ├── profile.example.yaml   通用模板（入库）
 │   └── profile.yaml           你自己的（.gitignore）
 ├── scripts/
-│   ├── auto.py                一键：体检 → 额度 → 投递 → 报告
+│   ├── auto.py                一键：体检 → 投递 → 报告
 │   ├── apply.py               投递主循环（台账去重、断点续跑）
 │   ├── fit.py                 胜任度判断（读 skills）
 │   ├── messages.py            类别归类 + 话术取用（读 messages）
@@ -293,7 +297,7 @@ python -c "import json;rs=[json.loads(l) for l in open('data/applied.jsonl',enco
 │   ├── onboard.py             读简历生成配置
 │   ├── profile.py             配置加载
 │   ├── common.py              u2 驱动封装、App 守卫、UI 解析、坐标缩放
-│   ├── quota.py               数今日已沟通
+│   ├── quota.py               手动查今日已沟通（可选，默认不跑）
 │   ├── history.py             抓求职记录，推断投递习惯
 │   └── doctor.py              环境体检
 ├── references/

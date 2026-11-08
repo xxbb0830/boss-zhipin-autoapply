@@ -5,7 +5,7 @@ Exposes run() so it can be driven by auto.py unattended.
 Per job: open card -> read JD -> classify -> 立即沟通 -> send ONE fixed
 category message -> back.  Resumable ledger, app guards, 全速节奏（gap=0）。
 """
-import os, sys, time, json, random, argparse
+import os, sys, time, json, random, argparse, re
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C
 import messages as M
@@ -226,6 +226,57 @@ def open_card(card):
     return False
 
 
+def handle_popup():
+    """点掉「今日还能沟通 N 次」这类提示框。
+
+    返回 (handled, hard)。hard=True 表示真的没额度了，必须停。
+    以前这里按返回键：弹窗被关掉 → 脚本再点沟通 → 又弹 → 又返回，
+    死循环，得人工点一下「好」。现在直接点弹窗上的确认按钮。
+    """
+    try:
+        xml = C.dump_xml()
+    except Exception:
+        return False, False
+    txts = " ".join(C.screen_texts(xml))
+    hard = any(k in txts for k in C.HARD_LIMIT_TEXTS)
+    btn = C.find_button(xml)
+    if not btn:
+        return False, hard
+    cx, cy, label = btn
+    m = re.search(r"(?:还能再?沟通|剩余)\s*(\d+)\s*次", txts)
+    extra = f" 还能沟通 {m.group(1)} 次" if m else ""
+    p(f"      popup 「{label}」{extra}{' → 没额度了' if hard else ''}")
+    C.tap(cx, cy, 0)
+    return True, hard
+
+
+def enter_chat(max_tries=3):
+    """点「立即沟通」并进入聊天页，中间顺手点掉挡路的提示框。
+
+    返回 ("chat"|"limit"|"no_chat", 说明)。
+    """
+    for _ in range(max_tries):
+        if not C.tap_id("btn_chat", 3):
+            # 校招/实习岗的按钮可能叫「投递简历」「申请职位」
+            for label in ("立即沟通", "投递简历", "申请职位", "我要投递", "沟通"):
+                if C.tap_text(label, 2):
+                    p(f"      used fallback button 「{label}」")
+                    break
+        if C.wait_for(lambda: "ChatRoom" in C.cur_act(),
+                      C.pace("chat_quick", 1.2)):
+            return "chat", ""
+
+        handled, hard = handle_popup()
+        if hard:
+            return "limit", "popup"
+        if handled:
+            continue                       # 弹窗点掉了，下一轮再点沟通
+        if not is_detail(C.cur_act()):
+            return "no_chat", C.cur_act()   # 跑到别的页面去了
+        # 还在详情页：多半是点击被转场动画吞了，下一轮重点
+    return "no_chat", "tries_exhausted"
+
+
 def apply_one(card, dry=False):
     title, company = card["title"], card["company"]
 
@@ -269,30 +320,16 @@ def apply_one(card, dry=False):
     # 校招/实习岗不一定是 btn_chat，可能叫「投递简历」等
     # 详情页刚画出来时按钮可能还没挂上点击响应，稍等一下再点
     time.sleep(C.pace("settle", 0.2))
-    tapped = C.tap_id("btn_chat", 6)
-    if not tapped:
-        for label in ("立即沟通", "投递简历", "申请职位", "我要投递", "沟通"):
-            if C.tap_text(label, 3):
-                tapped = True
-                p(f"      used fallback button 「{label}」")
-                break
-    if not tapped:
+    state, why = enter_chat()
+    if state == "limit":
         return_to_list()
-        return {"status": "btn_fail", "job": job, "company": comp}
-
-    # 等聊天页出现：先只等 1.2 秒（正常 0.3 秒就进去了），
-    # 没进去说明这一下被动画吞了，补点一次再等 —— 不要一上来就干等 5 秒
-    if not C.wait_for(lambda: "ChatRoom" in C.cur_act(),
-                      C.pace("chat_quick", 1.2)):
-        if is_detail(C.cur_act()):
-            C.tap_id("btn_chat", 2)
-            C.wait_for(lambda: "ChatRoom" in C.cur_act(),
-                       C.pace("chat_timeout", 5.0))
-    if "ChatRoom" not in C.cur_act():
+        return {"status": "no_chat", "limit": True, "job": job, "company": comp}
+    if state != "chat":
         txts = C.screen_texts(C.dump_xml())
-        limit = any(k in t for t in txts for k in ("上限", "频繁", "明天再", "已达"))
+        limit = any(k in t for t in txts for k in C.HARD_LIMIT_TEXTS)
         return_to_list()
-        return {"status": "no_chat", "limit": limit, "job": job, "company": comp}
+        return {"status": "no_chat", "limit": limit, "why": why,
+                "job": job, "company": comp}
 
     _, msg = M.build(job, det["jd"], comp)
     ok, how = send_message(msg)
@@ -332,7 +369,14 @@ def run(limit=150, dry=False, min_gap=None, max_gap=None, max_scrolls=600):
             return_to_list()
 
         try:
-            cards = C.parse_cards(C.dump_xml())
+            xml = C.dump_xml()
+            # 列表页也可能压着提示框（比如「今日还能沟通 N 次」），先点掉
+            pb = C.find_button(xml, ("知道了", "我知道了", "确定", "好的"))
+            if pb:
+                p(f"      popup 「{pb[2]}」on list")
+                C.tap(pb[0], pb[1], 0)
+                continue
+            cards = C.parse_cards(xml)
         except Exception as e:
             p(f"parse warn: {e}")
             C.ensure_job_list()
