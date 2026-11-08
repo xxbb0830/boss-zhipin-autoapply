@@ -154,20 +154,23 @@ def extract_highlights(text, limit=8):
 
 
 def draft_messages(text, max_len):
-    """按类别生成话术草稿：只把简历里真实出现的类别关键词拼进去。"""
+    """按类别生成话术草稿：只把简历里真实出现的类别关键词拼进去。
+
+    草稿也走口语化 + 具体动作的写法，不要「可聊」这种收尾。
+    """
     low = text.lower()
     drafts = {}
     for cat, kws in CATEGORIES.items():
         present = [k for k in kws if count_term(low, k)]
         if present:
             pick = "、".join(display(k) for k in present[:2])
-            msg = f"做过{pick}相关项目，可聊"
+            msg = f"我之前做过{pick}相关的项目，从需求到上线都是自己跟的。您这边主要做哪块？"
         else:
-            msg = f"有{cat}方向项目经验，可聊"
+            msg = "我做过这个方向的项目，能直接上手。您这边主要做哪块？"
         if len(msg) > max_len:
-            msg = msg[:max_len - 1] + "聊"
+            msg = msg[:max_len - 1] + "…"
         drafts[cat] = msg
-    drafts["default"] = "有相关项目落地经验，可聊"
+    drafts["default"] = "我这一年主要做AI应用落地，Python后端也能写。合适的话我把简历发您。"
     return drafts
 
 
@@ -201,8 +204,9 @@ def render_yaml(skills, messages, city, name, resume_path, highlights):
         for k in kws:
             L.append(f"    - {k}")
     L.append("")
-    L.append("# 一次性开场话术（≤40 字，固定文本，不按岗位生成）")
-    L.append("# 下面是草稿：把「做过XX相关项目」换成你真做过的那个项目")
+    L.append("# 一次性开场话术（≤80 字，固定文本，不按岗位生成）")
+    L.append("# 下面是草稿：把「做过XX相关项目」换成你真做过的那个项目，")
+    L.append("# 口语一点、像自己说话；结尾别写「可聊」，要么反问一句要么说把简历发过去")
     L.append("messages:")
     for cat, msg in messages.items():
         L.append(f'  {cat}: "{msg}"')
@@ -223,7 +227,7 @@ def render_yaml(skills, messages, city, name, resume_path, highlights):
     L.append("fit:")
     L.append("  min_score: 3")
     L.append("  short_jd: 200")
-    L.append("  max_message_len: 40")
+    L.append("  max_message_len: 80")
     L.append("")
     L.append("limits:")
     L.append("  daily: 150")

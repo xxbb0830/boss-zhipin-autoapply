@@ -62,7 +62,7 @@ def load(reload=False):
     data.setdefault("fit", {})
     data["fit"].setdefault("min_score", 3)
     data["fit"].setdefault("short_jd", 200)
-    data["fit"].setdefault("max_message_len", 40)
+    data["fit"].setdefault("max_message_len", 80)
     data.setdefault("limits", {})
     data["limits"].setdefault("daily", 150)
     data["limits"].setdefault("reserve", 2)

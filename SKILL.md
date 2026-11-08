@@ -11,8 +11,8 @@ End-to-end automation for applying to jobs on the BOSS直聘 Android app.
 
 **Core principle (user instruction):** never regenerate wording per target.
 Classify the job from the professional terms in its JD, then send the
-**fixed pre-written message for that category** — every message is **≤40 字**,
-no per-job wording, no job-title substitution.
+**fixed pre-written message for that category** — every message is **≤80 字**,
+口语化，no per-job wording, no job-title substitution.
 
 **Targeting principle (user instruction, 2026-11-05):** 学历、经验、薪资**一律不筛**。
 列表卡片只判断「还在招」；真正的判断在进详情页读完岗位职责之后 ——
@@ -99,7 +99,7 @@ $PY apply.py --limit 150    # 只跑投递循环
        tap btn_chat ─────────► ChatRoomActivity
                                  app auto-sends the default greeting
                                  (= the 投递 itself, consumes 1 沟通 quota)
-       type pre-written category message (≤40 字)
+       type pre-written category message (≤80 字)
        tap the send control right of the EditText
        verify the message appears as tv_content_text
        back → detail → back → list
@@ -148,17 +148,18 @@ asyncio / Docker / MySQL / Hive / pandas / 爬虫 ……
 `messages.classify(title, jd)` scores keywords against title + JD text
 (title hits weigh 3×). Categories, in priority of specificity:
 
-| cat | triggered by (examples) | 固定话术（≤40 字，示例） |
+| cat | triggered by (examples) | 固定话术（≤80 字，示例） |
 | --- | --- | --- |
-| `rag` | RAG / 检索增强 / 知识库 / 向量 / FAISS / BM25 / 召回 / 问答 | `做过RAG问答项目：切片、向量检索、拒答护栏，可聊` |
-| `agent` | Agent / 智能体 / 工作流 / 编排 / 工具调用 / ReAct / Harness / Coze / Dify | `做过Agent项目：工具调用、参数校验、防编造，可聊` |
-| `llm` | 大模型 / LLM / 算法 / NLP / 微调 / LoRA / Transformer / 推理 | `做过大模型应用落地：RAG问答 + Agent 调度，可聊` |
-| `eng` | 后端 / 服务端 / Python / FastAPI / 全栈 / 并发 / Docker / Java | `Python后端 + 异步并发 + Docker 部署，能独立扛，可聊` |
-| `data` | 数据开发 / 数仓 / ETL / Hive / 爬虫 / SQL | `数据清洗到入库全链路，ETL + 数仓，可聊` |
-| `default` | none matched | `有AI应用落地经验，Python 后端也能接，可聊` |
+| `rag` | RAG / 检索增强 / 知识库 / 向量 / FAISS / BM25 / 召回 / 问答 | `我之前做过RAG问答，从文档切片、向量检索到答不准就拒答，这几块都是我写的。您这岗位也是这个方向吗？` |
+| `agent` | Agent / 智能体 / 工作流 / 编排 / 工具调用 / ReAct / Harness / Coze / Dify | `我做过Agent项目，工具调用、参数校验和防编造都是自己加的，线上跑过。您这边主要落在哪块业务？` |
+| `llm` | 大模型 / LLM / 算法 / NLP / 微调 / LoRA / Transformer / 推理 | `我做过两个大模型落地的项目，原理和工程两边都碰过。您这岗位更偏哪一边？` |
+| `eng` | 后端 / 服务端 / Python / FastAPI / 全栈 / 并发 / Docker / Java | `我主要写Python后端，异步并发和Docker部署都是自己弄的。您这边后端用什么栈？` |
+| `data` | 数据开发 / 数仓 / ETL / Hive / 爬虫 / SQL | `我做过数据清洗到入库的全链路，ETL和数仓调优都做过。您这边数据这块现在缺哪一环？` |
+| `default` | none matched | `我这一年主要做大模型应用落地，Python后端也能写。合适的话我把简历发您。` |
 
-**话术是硬约束：≤ `fit.max_message_len` 字（默认 40），固定文本，
+**话术是硬约束：≤ `fit.max_message_len` 字（默认 80），固定文本，
 不替换岗位名、不自我介绍、不放简历请求。**
+结尾**不要写「可聊」**（用户口径：太轻浮）—— 技术岗反问一句，通用岗说「把简历发您」。
 真正在用的文案在 `config/profile.yaml` 的 `messages` 段；
 `onboard.py --check` 会校验长度。**Do not** add per-job generation.
 
