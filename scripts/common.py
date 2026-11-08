@@ -24,6 +24,48 @@ def profile_limits():
         return {}
 
 
+_PACING = None
+
+
+def profile_pacing():
+    """config/profile.yaml 的 pacing 段（节奏控制）。"""
+    global _PACING
+    if _PACING is None:
+        try:
+            import profile as P
+            _PACING = dict((P.load() or {}).get("pacing") or {})
+        except Exception:
+            _PACING = {}
+    return _PACING
+
+
+def pace(key, default):
+    """读 pacing 配置；没配就用 default（全部是秒）。"""
+    try:
+        return float(profile_pacing().get(key, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def wait_for(pred, timeout=3.0, poll=None):
+    """轮询直到 pred() 为真，最多 timeout 秒；返回 True/False。
+
+    比「点完固定 sleep 2 秒」快得多：界面 0.3 秒就绪就 0.3 秒返回，
+    慢的时候也不会提前读到一个还没画完的页面。
+    """
+    poll = pace("poll", 0.12) if poll is None else poll
+    end = time.time() + max(0.0, timeout)
+    while True:
+        try:
+            if pred():
+                return True
+        except Exception:
+            pass
+        if time.time() >= end:
+            return False
+        time.sleep(poll)
+
+
 _PATHS = _cfg_paths()
 
 
@@ -173,61 +215,104 @@ def dump_xml():
     return dev().dump_hierarchy()
 
 
+def _invalidate_app():
+    """动作之后让 app_current 缓存失效，下一次读的是真实界面。"""
+    global _app_cache
+    _app_cache = (0.0, "", "")
+
+
 @robust
-def tap(x, y, wait=1.0):
+def tap(x, y, wait=None):
+    """点击。wait=None 时用 pacing.tap（默认 0.15s，不再傻等 1 秒）。"""
     sx, sy = scale()
     dev().click(int(round(x * sx)), int(round(y * sy)))
-    time.sleep(wait)
+    _invalidate_app()
+    time.sleep(pace("tap", 0.15) if wait is None else wait)
 
 
 @robust
-def swipe(x1, y1, x2, y2, dur=0.35, wait=1.0):
+def swipe(x1, y1, x2, y2, dur=None, wait=None):
     sx, sy = scale()
     dev().swipe(int(round(x1 * sx)), int(round(y1 * sy)),
-                int(round(x2 * sx)), int(round(y2 * sy)), dur)
-    time.sleep(wait)
+                int(round(x2 * sx)), int(round(y2 * sy)),
+                pace("swipe_dur", 0.2) if dur is None else dur)
+    _invalidate_app()
+    time.sleep(pace("tap", 0.15) if wait is None else wait)
 
 
 @robust
-def back(wait=1.2):
+def back(wait=None):
     dev().press("back")
-    time.sleep(wait)
+    _invalidate_app()
+    time.sleep(pace("back", 0.3) if wait is None else wait)
 
 
 @robust
-def tap_id(rid, timeout=6.0):
+def press_multi(keys, wait=None):
+    """一次 adb 调用连按多个键。
+
+    `input keyevent 4 4 4` 连按三次返回只要 0.25 秒，
+    比按一次等一次（每次 0.45 秒）快三倍多。
+    """
+    dev().shell(["input", "keyevent"] + [str(k) for k in keys])
+    _invalidate_app()
+    time.sleep(pace("tap", 0.15) if wait is None else wait)
+
+
+@robust
+def tap_id(rid, timeout=6.0, wait=None):
     d = dev()
     el = d(resourceId=ID + rid)
     if el.wait(timeout=timeout):
         el.click()
-        time.sleep(1.0)
+        _invalidate_app()
+        time.sleep(pace("tap", 0.15) if wait is None else wait)
         return True
     return False
 
 
 @robust
-def tap_text(txt, timeout=5.0):
+def tap_text(txt, timeout=5.0, wait=None):
     d = dev()
     el = d(text=txt)
     if el.wait(timeout=timeout):
         el.click()
-        time.sleep(1.2)
+        _invalidate_app()
+        time.sleep(pace("tap", 0.15) if wait is None else wait)
         return True
     return False
 
 
-def cur_pkg():
+_app_cache = (0.0, "", "")
+
+
+def cur_app():
+    """一次 adb 调用同时拿包名和 activity，并缓存 act_ttl 秒。
+
+    原来 cur_pkg() 和 cur_act() 各查一次，一次 0.4 秒；脚本里这两个
+    几乎总是成对调用。合并 + 缓存后每轮能省好几秒。
+    """
+    global _app_cache
+    ts, pkg, act = _app_cache
+    if pkg and (time.time() - ts) < pace("act_ttl", 0.2):
+        return pkg, act
     try:
-        return dev().app_current().get("package", "")
+        info = dev().app_current() or {}
+        pkg = info.get("package", "") or ""
+        act = info.get("activity", "") or ""
     except Exception:
-        return ""
+        return "", ""
+    if pkg:
+        _app_cache = (time.time(), pkg, act)
+    return pkg, act
+
+
+def cur_pkg():
+    return cur_app()[0]
 
 
 def cur_act():
-    try:
-        return dev().app_current().get("activity", "")
-    except Exception:
-        return ""
+    return cur_app()[1]
 
 
 # ---------------- app guards ----------------
@@ -241,11 +326,12 @@ def ensure_boss(max_steps=8):
                 d.app_start(PKG, stop=False)
             except Exception:
                 pass
-            time.sleep(3.5)
+            wait_for(lambda: cur_pkg() == PKG, pace("app_start", 8.0))
             continue
         if "MainActivity" in cur_act():
             return True
-        back(1.3)
+        back(0)
+        wait_for(lambda: "MainActivity" in cur_act(), pace("back_timeout", 1.5))
     return "MainActivity" in cur_act()
 
 
@@ -259,13 +345,13 @@ def ensure_job_list(max_steps=8):
             return True
         # try the 职位 tab
         try:
-            if d(resourceId=ID + "cl_tab_1").exists(timeout=2):
+            if d(resourceId=ID + "cl_tab_1").exists(timeout=1.5):
                 d(resourceId=ID + "cl_tab_1").click()
-                time.sleep(2.0)
+                time.sleep(pace("tab", 0.3))
                 continue
         except Exception:
             pass
-        back(1.2)
+        back(0)
     xml = dump_xml()
     return 'tv_position_name' in xml
 

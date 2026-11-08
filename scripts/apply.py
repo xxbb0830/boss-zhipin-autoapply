@@ -3,7 +3,7 @@
 
 Exposes run() so it can be driven by auto.py unattended.
 Per job: open card -> read JD -> classify -> 立即沟通 -> send ONE fixed
-category message -> back.  Resumable ledger, app guards, human pacing.
+category message -> back.  Resumable ledger, app guards, 全速节奏（gap=0）。
 """
 import os, sys, time, json, random, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +28,15 @@ def p(msg):
 
 def key_of(title, company):
     return f"{(company or '').strip()}|{(title or '').strip()}"
+
+
+def _top_title():
+    """列表最上面那张卡的岗位名，用来判断「这一滑到底有没有动」。"""
+    try:
+        cs = C.parse_cards(C.dump_xml())
+        return cs[0]["title"] if cs else ""
+    except Exception:
+        return ""
 
 
 def is_detail(act):
@@ -75,7 +84,7 @@ def _panel_open(xml):
 def _clear_input(et):
     try:
         et.set_text("")
-        time.sleep(0.35)
+        time.sleep(C.pace("tap", 0.15))
     except Exception:
         pass
 
@@ -87,15 +96,19 @@ def send_message(text, tries=3):
     and the emoji button is closer, so we take the RIGHTMOST control.
     Verified by looking for the bubble in tv_content_text; a draft is always
     cleared so nothing half-typed is left behind.
+
+    速度：不再「输完等 1.3 秒、点发送再等 3 次 0.9 秒」，
+    改成轮询 —— 文字上屏、气泡出现就立刻往下走。
     """
     d = C.dev()
     last = "unknown"
+    t_send = C.pace("send_timeout", 3.0)
     for attempt in range(1, tries + 1):
         et = d(resourceId=EDIT_ID)
-        if not et.exists(timeout=6):
+        if not et.exists(timeout=4):
             return False, "no_edittext"
         et.click()
-        time.sleep(0.8)
+        time.sleep(C.pace("tap", 0.15))
         _clear_input(et)
 
         try:
@@ -103,21 +116,15 @@ def send_message(text, tries=3):
         except Exception as e:
             last = f"set_text:{str(e)[:40]}"
             continue
-        time.sleep(1.3)
 
-        cur = ""
-        try:
-            cur = et.get_text() or ""
-        except Exception:
-            pass
-        if text[:8] not in cur:
+        # 输入框里真的有字了才继续（比固定 sleep 1.3 快，也更可靠）
+        if not C.wait_for(lambda: text[:8] in (et.get_text() or ""),
+                          C.pace("type_timeout", 1.2), poll=0.1):
             try:
                 et.set_text(text)
-                time.sleep(1.0)
-                cur = et.get_text() or ""
             except Exception:
-                cur = ""
-            if text[:8] not in cur:
+                pass
+            if not C.wait_for(lambda: text[:8] in (et.get_text() or ""), 0.8, poll=0.1):
                 last = "text_not_typed"
                 continue
 
@@ -139,21 +146,16 @@ def send_message(text, tries=3):
             positions = [(1335, 3070)]
 
         for (px, py) in positions:
-            C.tap(px, py, 1.6)
+            C.tap(px, py, 0)
             if C.cur_pkg() != C.PKG:
                 return False, "trap_app_switch"
-            for _ in range(3):
-                try:
-                    msgs = chat_msgs(C.dump_xml())
-                except Exception:
-                    msgs = []
-                if any(text[:10] in m for m in msgs):
-                    return True, f"sent(try{attempt})@{px},{py}"
-                time.sleep(0.9)
+            if C.wait_for(lambda: any(text[:10] in m for m in chat_msgs(C.dump_xml())),
+                          t_send, poll=0.15):
+                return True, f"sent(try{attempt})@{px},{py}"
             try:
                 if _panel_open(C.dump_xml()):
                     last = "panel_opened"
-                    C.back(1.0)
+                    C.back(0)
                     break
             except Exception:
                 pass
@@ -163,32 +165,64 @@ def send_message(text, tries=3):
     return False, last
 
 
+_LAST_XML = None
+
+
+def _detail_ready():
+    """详情页真正画出来了（不是只有 Activity 名变了）。
+
+    只看 activity 会在转场动画刚开始时就返回 True，那时候点「立即沟通」
+    可能被动画吞掉 —— 所以要求 tv_job_name 和 btn_chat 都在。
+    顺手把这份 xml 存下来，调用方不用再 dump 一次（一次 dump 0.3~0.5s）。
+    """
+    global _LAST_XML
+    try:
+        x = C.dump_xml()
+        _LAST_XML = x
+        return 'tv_job_name' in x and 'btn_chat' in x
+    except Exception:
+        _LAST_XML = None
+        return False
+
+
 def return_to_list(max_steps=8):
     """Get back to the scrollable job list, whatever screen we ended on."""
+    if "ChatRoom" in C.cur_act():
+        # 发完消息输入法还开着：第一次返回只是收键盘，第二次退聊天，
+        # 第三次退详情。三次一起发（一次 adb 调用 0.25 秒），
+        # 比「按一次等一次」快 3 秒左右。
+        C.press_multi(["4", "4", "4"])
+        C.wait_for(lambda: is_list(C.cur_act()), C.pace("back_timeout", 2.0))
+
     for _ in range(max_steps):
-        act = C.cur_act()
+        pkg, act = C.cur_app()
+        if pkg != C.PKG:
+            C.ensure_boss()
+            continue
         if is_list(act):
             try:
                 if 'tv_position_name' in C.dump_xml():
                     return True
             except Exception:
                 pass
-        if C.cur_pkg() != C.PKG:
-            C.ensure_boss()
-            continue
-        C.back(1.2)
+            # 已经在主页但停在别的 tab（从聊天页退回来常落到「消息」）——
+            # 这时候按返回键没用，直接点「职位」tab
+            return C.ensure_job_list()
+        prev = act
+        C.back(0)
+        C.wait_for(lambda: C.cur_act() != prev, C.pace("back_timeout", 1.5))
     return C.ensure_job_list()
 
 
 def open_card(card):
-    """Tap a list card and land on its detail page. Tries a few tap points."""
+    """Tap a list card and land on a fully rendered detail page."""
     pts = [(720, card["y_mid"]), (400, card["y_mid"]),
            (720, card["y_mid"] + 120), (720, card["y_mid"] - 80)]
+    tmo = C.pace("detail_timeout", 3.0)
     for (x, y) in pts:
-        C.tap(x, y, 2.6)
-        if is_detail(C.cur_act()):
+        C.tap(x, y, 0)
+        if C.wait_for(lambda: is_detail(C.cur_act()) and _detail_ready(), tmo):
             return True
-        time.sleep(0.8)
     return False
 
 
@@ -202,7 +236,7 @@ def apply_one(card, dry=False):
         return {"status": "open_fail", "activity": C.cur_act(),
                 "job": title, "company": company}
 
-    det = C.parse_detail(C.dump_xml())
+    det = C.parse_detail(_LAST_XML or C.dump_xml())
     job = det["job"] or title
     comp = det["company"] or company
     btn = det["btn"]
@@ -233,6 +267,8 @@ def apply_one(card, dry=False):
                 "job": job, "company": comp, "cat": cat}
 
     # 校招/实习岗不一定是 btn_chat，可能叫「投递简历」等
+    # 详情页刚画出来时按钮可能还没挂上点击响应，稍等一下再点
+    time.sleep(C.pace("settle", 0.2))
     tapped = C.tap_id("btn_chat", 6)
     if not tapped:
         for label in ("立即沟通", "投递简历", "申请职位", "我要投递", "沟通"):
@@ -243,8 +279,15 @@ def apply_one(card, dry=False):
     if not tapped:
         return_to_list()
         return {"status": "btn_fail", "job": job, "company": comp}
-    time.sleep(3.0)
 
+    # 等聊天页出现：先只等 1.2 秒（正常 0.3 秒就进去了），
+    # 没进去说明这一下被动画吞了，补点一次再等 —— 不要一上来就干等 5 秒
+    if not C.wait_for(lambda: "ChatRoom" in C.cur_act(),
+                      C.pace("chat_quick", 1.2)):
+        if is_detail(C.cur_act()):
+            C.tap_id("btn_chat", 2)
+            C.wait_for(lambda: "ChatRoom" in C.cur_act(),
+                       C.pace("chat_timeout", 5.0))
     if "ChatRoom" not in C.cur_act():
         txts = C.screen_texts(C.dump_xml())
         limit = any(k in t for t in txts for k in ("上限", "频繁", "明天再", "已达"))
@@ -253,14 +296,21 @@ def apply_one(card, dry=False):
 
     _, msg = M.build(job, det["jd"], comp)
     ok, how = send_message(msg)
-    time.sleep(0.5)
     return_to_list()
     return {"status": "ok" if ok else "msg_fail", "how": how, "cat": cat,
             "job": job, "company": comp, "msg_len": len(msg)}
 
 
-def run(limit=150, dry=False, min_gap=7.0, max_gap=15.0, max_scrolls=600):
-    """Run the apply loop. Returns a stats dict."""
+def run(limit=150, dry=False, min_gap=None, max_gap=None, max_scrolls=600):
+    """Run the apply loop. Returns a stats dict.
+
+    节奏全部从 config/profile.yaml 的 pacing 段读；默认 gap=0（全速），
+    想放慢就把 pacing.gap 改成 7~15，或命令行传 --min-gap/--max-gap。
+    """
+    if min_gap is None:
+        min_gap = C.pace("gap", 0.0)
+    if max_gap is None:
+        max_gap = max(min_gap, C.pace("gap_max", min_gap))
     done = load_done()
     skipped = set()          # tried-and-failed / already handled this run
     p(f"ledger ok={len(done)}  limit={limit}  dry={dry}")
@@ -303,7 +353,13 @@ def run(limit=150, dry=False, min_gap=7.0, max_gap=15.0, max_scrolls=600):
             p(f"filtered {n_filtered} card(s) by salary band")
 
         if target is None:
-            C.swipe(720, 2750, 720, 1150, 0.35, 1.2)
+            # 滑一屏，然后等列表真的动了再继续（比固定等 1.2 秒快，也不会
+            # 在还没滚完时读到旧卡片、白算一次 scroll）
+            top_before = cards[0]["title"] if cards else ""
+            C.swipe(720, 2750, 720, 1150, 0)
+            if top_before:
+                C.wait_for(lambda: _top_title() != top_before,
+                           C.pace("scroll_timeout", 1.2), poll=0.1)
             scrolls += 1
             no_progress += 1
             if no_progress >= 25:
@@ -347,7 +403,8 @@ def run(limit=150, dry=False, min_gap=7.0, max_gap=15.0, max_scrolls=600):
             done.add(k2)                      # in-memory dedup — critical
             log(r)
             p(f"[{n_ok:3d}] OK [{r.get('cat')}] {r['company']} | {r['job']}")
-            time.sleep(random.uniform(min_gap, max_gap))
+            if max_gap > 0:                   # 默认 0 = 全速，不留间隔
+                time.sleep(random.uniform(min_gap, max_gap))
             if n_ok % 15 == 0:
                 C.ensure_job_list()
         elif st in ("already", "dry", "no_fit"):
@@ -363,7 +420,7 @@ def run(limit=150, dry=False, min_gap=7.0, max_gap=15.0, max_scrolls=600):
             log(r)
             p(f"      {st:<7} {mark:<20} [{r.get('cat')}] "
               f"{r.get('company')} | {r.get('job')}")
-            time.sleep(0.6)
+            time.sleep(C.pace("skip", 0.1))
         elif st == "no_chat" and r.get("limit"):
             log(r)
             p("STOP: daily-limit signal from app")
@@ -377,7 +434,7 @@ def run(limit=150, dry=False, min_gap=7.0, max_gap=15.0, max_scrolls=600):
             if consec >= 4:
                 abort = "consecutive_failures"
                 break
-            time.sleep(1.5)
+            time.sleep(C.pace("fail", 0.3))
 
     dt = (time.time() - t0) / 60
     p(f"DONE ok={n_ok} skip={n_skip} dry={n_dry} fail={n_fail} scrolls={scrolls} {dt:.1f}min abort={abort}")
@@ -389,8 +446,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=150)
     ap.add_argument("--dry", action="store_true")
-    ap.add_argument("--min-gap", type=float, default=7.0)
-    ap.add_argument("--max-gap", type=float, default=15.0)
+    ap.add_argument("--min-gap", type=float, default=None,
+                    help="两个岗位之间的最小间隔秒数（默认读 pacing.gap，0=全速）")
+    ap.add_argument("--max-gap", type=float, default=None,
+                    help="两个岗位之间的最大间隔秒数")
     ap.add_argument("--max-scrolls", type=int, default=600)
     a = ap.parse_args()
     run(a.limit, a.dry, a.min_gap, a.max_gap, a.max_scrolls)

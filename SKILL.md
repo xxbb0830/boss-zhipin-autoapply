@@ -163,7 +163,35 @@ asyncio / Docker / MySQL / Hive / pandas / 爬虫 ……
 真正在用的文案在 `config/profile.yaml` 的 `messages` 段；
 `onboard.py --check` 会校验长度。**Do not** add per-job generation.
 
-## 5. Quota policy
+## 5. Pacing（节奏）
+
+用户口径（2026-11-08）：**不要模拟人手，全速投**。他自己手动投也是几秒一个，
+慢的只是「没有话术」，不是操作速度。所以所有固定 sleep 都拆掉了，
+换成「轮询到界面就绪立刻往下走」。
+
+| 环节 | 以前 | 现在 |
+| --- | --- | --- |
+| 两个岗位之间 | 固定随机 7–15 秒 | **0 秒**（`pacing.gap`） |
+| 点开岗位卡片 | 固定等 2.6 秒 | 轮询到 `tv_job_name`+`btn_chat` 都在 |
+| 点「立即沟通」 | 固定等 3 秒 | 轮询到 ChatRoom（正常 0.3 秒） |
+| 输入话术 | 输完固定等 1.3 秒 | 轮询到输入框里真的有字 |
+| 点发送 | 点完轮询 3×0.9 秒 | 轮询到气泡上屏 |
+| 退出聊天页 | 逐页返回，每页等 1.2 秒 | `input keyevent 4 4 4` 一次 adb 调用 0.25 秒 |
+
+实测：每投一个 **6–10 秒**（原来 20 秒左右），150 个额度约 20–25 分钟跑完。
+
+几个实现要点，改代码时别踩回去：
+
+- `common.cur_app()` 一次 adb 调用同时拿 package + activity，并缓存
+  `pacing.act_ttl`（默认 0.2 秒）。原来 `cur_pkg()` 和 `cur_act()` 各查一次，
+  一次 0.4 秒，一轮下来 35 次调用白花 13 秒。
+- `common.press_multi(["4","4","4"])` 连按三次返回：**发完消息输入法还开着**，
+  第一次返回只收键盘，第二次退聊天，第三次退详情 —— 少按一次就会卡在详情页。
+- `open_card` 必须等到 `tv_job_name` + `btn_chat` 都渲染出来再点，
+  只看 Activity 名会在转场动画中途返回，那一下点击会被吞掉（白等 5 秒）。
+- 想恢复「像人一样慢慢投」：`pacing.gap: 7` / `gap_max: 15` 即可，代码不用改。
+
+## 6. Quota policy
 
 BOSS直聘 caps 沟通 per day (user states 150). The engine therefore:
 
@@ -175,7 +203,7 @@ BOSS直聘 caps 沟通 per day (user states 150). The engine therefore:
 5. Four consecutive failures also stop the run (protects against a broken
    UI state rather than burning the quota blindly).
 
-## 6. Guardrails (learned the hard way)
+## 7. Guardrails (learned the hard way)
 
 - **App guard.** A mis-tap can launch a third-party app (an Alipay ad was
   observed). `common.ensure_boss()` / `ensure_job_list()` re-focus
@@ -214,7 +242,7 @@ BOSS直聘 caps 沟通 per day (user states 150). The engine therefore:
   To change keywords, tap a suggestion chip or restart the app with a
   different last search.
 
-## 7. Files
+## 8. Files
 
 ```
 SKILL.md                本文件：给 AI agent 看的操作手册
@@ -240,7 +268,7 @@ references/ui-map.md    every selector and activity used
 references/messages.md  话术设计说明（文案本体在 config）
 ```
 
-## 8. Reporting
+## 9. Reporting
 
 After a run, summarise from the ledger:
 

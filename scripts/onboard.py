@@ -233,6 +233,11 @@ def render_yaml(skills, messages, city, name, resume_path, highlights):
     L.append("  daily: 150")
     L.append("  reserve: 2")
     L.append("")
+    L.append("# 节奏：默认全速（gap=0）。担心频率就改成 7 / 15")
+    L.append("pacing:")
+    L.append("  gap: 0")
+    L.append("  gap_max: 0")
+    L.append("")
     if highlights:
         L.append("# ------------------------------------------------------------")
         L.append("# 简历里可以当话术素材的句子（写话术时参考，脚本不读这段）")
